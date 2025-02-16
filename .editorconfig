@@ -1,0 +1,25 @@
+root = true
+
+[.clang-format]
+end_of_line = lf
+
+[.editorconfig]
+end_of_line = lf
+
+[*.{,c,cpp,h,hpp}]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{ini,md,retrosh,txt}]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[{GNUmakefile,[Mm]akefile}]
+end_of_line = lf
+indent_style = tab

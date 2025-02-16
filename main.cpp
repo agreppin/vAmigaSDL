@@ -1,22 +1,15 @@
-#include <iostream>
-#include <stdexcept>
-#include <memory>
-#include <string>
-#include <thread>
-#include <vector>
-#include <cstring>
-#include <stdint.h>
 #include <ctime>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 #include <SDL3/SDL.h>
 
-#include "config.h"
-#include "Emulator.h"
-#include "RomFile.h"
-#include "ExtendedRomFile.h"
-#include "IOUtils.h"
-#include "Snapshot.h"
+#include "VAmigaConfig.h"
 #include "VAmiga.h"
+#include "MediaFile.h"
 
 #include "debug.h"
 #include "microknight.h"
@@ -24,11 +17,38 @@
 
 using namespace vamiga;
 
+enum STATE {
+  INIT  = 0x00,
+  PAUSE = 0x01,
+  RUN   = 0x02,
+};
+
+static STATE state_ = STATE::INIT;
+
 // Visible area
+#define TEST0 1
+#if TEST0
 constexpr int xstart = (HBLANK_MAX + 1) * 4;
 constexpr int xend   = HPIXELS;
 constexpr int ystart = 0x1B;
 constexpr int yend   = 0x137;
+
+constexpr SDL_FRect *srcrect = nullptr;
+#else
+constexpr int xstart2 = (HBLANK_MAX + 1) * 4;
+constexpr int ystart2 = 0x1B + 1;
+constexpr int yend2   = VPIXELS - 2 + 1;
+constexpr int xstart  = 0;
+constexpr int xend    = HPIXELS;
+constexpr int ystart  = 0;
+constexpr int yend    = VPIXELS;
+#if 1
+constexpr SDL_FRect srcrect1 = {xstart, ystart * 2, (xend - xstart) * 1, (yend - ystart) * 2};
+#else
+constexpr SDL_FRect srcrect1 = {xstart, ystart2 * 2, (xend - xstart) * 1, (yend2 - ystart2) * 2};
+#endif
+static const SDL_FRect *srcrect = &srcrect1;
+#endif
 static_assert(xend - xstart <= HPIXELS);
 static_assert(yend - ystart <= VPIXELS);
 
@@ -88,94 +108,123 @@ public:
 
   int run(int argc, char *argv[]) {
     emulator_.set(ConfigScheme::A500_OCS_1MB);
-    emulator_.set(Option::HOST_SAMPLE_RATE, audio_sample_rate);
+    emulator_.set(Opt::HOST_SAMPLE_RATE, audio_sample_rate);
     for (int n = 0; n < 4; ++n)
-      emulator_.set(Option::HDC_CONNECT, false, n);
+      emulator_.set(Opt::HDC_CONNECT, false, n);
 
     bool auto_power_on = true;
     int drive = 0, hd = 0, scale = 1;
-    std::string ext_rom;
+    FloppyDriveAPI *df[] = {&emulator_.df0, &emulator_.df1, &emulator_.df2, &emulator_.df3};
+    HardDriveAPI *dh[]   = {&emulator_.hd0, &emulator_.hd1, &emulator_.hd2, &emulator_.hd3};
+    fs::path hdpath[4]   = {};
+
+    emulator_.launch(
+      this, [](const void *ptr, Message msg) { reinterpret_cast<driver *>(const_cast<void *>(ptr))->msg_queue_callback(msg); });
+
     for (int i = 1; i < argc; ++i) {
-      if (!strcmp(argv[i], "-bigbox")) {
+      if (!strcmp(argv[i], "-bigbox")) { // TODO this can be done in .ini scripts
         emulator_.set(ConfigScheme::A500_ECS_1MB);
-        emulator_.set(Option::MEM_CHIP_RAM, 2048);
-        emulator_.set(Option::MEM_FAST_RAM, 8192);
-        emulator_.set(Option::MEM_SLOW_RAM, 0);
-        emulator_.set(Option::CPU_OVERCLOCKING, 14);
-        emulator_.set(Option::CPU_REVISION, (i64)CPURevision::CPU_68EC020);
+        emulator_.set(Opt::MEM_CHIP_RAM, 2048);
+        emulator_.set(Opt::MEM_FAST_RAM, 8192);
+        emulator_.set(Opt::MEM_SLOW_RAM, 0);
+        emulator_.set(Opt::CPU_OVERCLOCKING, 14);
+        emulator_.set(Opt::CPU_REVISION, (i64)CPURev::CPU_68EC020);
         continue;
       } else if (!strcmp(argv[i], "-a600")) {
         emulator_.set(ConfigScheme::A500_ECS_1MB);
-        emulator_.set(Option::MEM_CHIP_RAM, 1024);
-        emulator_.set(Option::MEM_SLOW_RAM, 0);
+        emulator_.set(Opt::MEM_CHIP_RAM, 1024);
+        emulator_.set(Opt::MEM_SLOW_RAM, 0);
         continue;
       } else if (!strcmp(argv[i], "-2")) {
         scale = 2;
         continue;
       }
 
-      std::filesystem::path p{argv[i]};
-      FloppyDriveAPI *df[] = {&emulator_.df0, &emulator_.df1, &emulator_.df2, &emulator_.df3};
-      HardDriveAPI *dh[]   = {&emulator_.hd0, &emulator_.hd1, &emulator_.hd2, &emulator_.hd3};
-
-      const auto suffix = util::uppercased(p.extension().string());
-      if (suffix == ".TXT") {
-        std::cout << "Executing script: " << argv[i] << "\n";
-        std::ifstream in{argv[i]};
-        if (!in || !in.is_open())
-          throw std::runtime_error{"Error opening: " + std::string{argv[i]}};
-        emulator_.retroShell.execScript(in);
-        auto_power_on = false;
-        continue;
-      } else if (suffix == ".SNP") {
-        std::cout << "Loading snapshot: " << argv[i] << "\n";
-        Snapshot snp{p};
+      const fs::path p{argv[i]};
+      const fs::file_status status = fs::status(p);
+      if (status == fs::file_status(fs::file_type::not_found)) {
+        dbg("File not found: %s\n", argv[i]);
+        return 1;
+      }
+      const fs::perms perms = status.permissions();
+      const bool wp         = ((perms & fs::perms::owner_write) == fs::perms::none);
+      FileType mt           = MediaFile::type(p);
+      if (mt == FileType::UNKNOWN) {
+        dbg("Unknown file type: %s\n", argv[i]);
+        return 1;
+      }
+      auto media = std::unique_ptr<MediaFile>(MediaFile::make(p, mt));
+      switch (mt) {
+      case FileType::ADF:
+      case FileType::ADZ:
+      case FileType::EADF:
+      case FileType::EXE:
+      case FileType::DMS:
+      case FileType::DIR:
+      case FileType::IMG:
+      case FileType::ST:
+        if (drive >= 4) {
+          dbg("Too many floppy drives\n");
+          return 1;
+        }
+        dbg("Inserting DF%d (r%c): '%s'\n", drive, wp ? 'o' : 'w', argv[i]);
+        if (drive)
+          emulator_.set(Opt::DRIVE_CONNECT, true, drive);
+        df[drive]->insertMedia(*media, wp);
+        ++drive;
+        break;
+      case FileType::HDF:
+      case FileType::HDZ:
+        if (hd >= 4) {
+          dbg("Too many hard drives\n"); // TODO dbg() => log()
+          return 1;
+        }
+        dbg("Attaching DH%d (r%c): '%s'\n", hd, wp ? 'o' : 'w', argv[i]);
+        emulator_.set(Opt::HDC_CONNECT, true, hd);
+        dh[hd]->attach(*media);
+        // dh[hd]->setFlag(DiskFlags::MODIFIED, false); // TODO FIXME
+        if (!wp)
+          hdpath[hd] = argv[i];
+        ++hd;
+        break;
+      case FileType::ROM:
+        emulator_.mem.loadRom(*media);
+        break;
+      case FileType::EXTENDED_ROM:
+        emulator_.mem.loadExt(*media);
+        break;
+      case FileType::SNAPSHOT:
+        dbg("Loading snapshot: %s\n", argv[i]);
         emulator_.powerOn();
-        amiga_.loadSnapshot(snp);
+        amiga_.loadSnapshot(*media);
         emulator_.run();
         auto_power_on = false;
         break;
-      } else if (suffix == ".ROM") {
-        emulator_.mem.loadRom(p);
-      } else if (suffix == ".BIN") {
-#if 0 // XXX
-	if (ExtendedRomFile::isExtendedRomFile(p))
-	  ext_rom = argv[i]; // load outside loop as loadRom deletes any extended rom (!)
-	else if (RomFile::isRomFile(p))
-	  amiga_.mem.loadRom(p);
-	else
-	  throw std::runtime_error { "Unknown binary file: " + std::string { argv[i] } };
-#else
-        emulator_.mem.loadRom(p);
-#endif
-      } else if (suffix == ".HDF" && hd < 4) {
-        emulator_.set(Option::HDC_CONNECT, true, hd);
-        dh[hd]->attach(p);
-#ifndef NDEBUG
-        WT_DEBUG = 1;
-#endif
-        emulator_.defaults.set("HD" + std::to_string(hd) + "_PATH", p.string());
-        emulator_.set(Option::HDR_WRITE_THROUGH, true, hd);
-        ++hd;
-      } else if (drive < 4) {
-        std::cout << "Inserting in DF" << drive << ": " << argv[i] << "\n";
-        if (drive)
-          emulator_.set(Option::DRIVE_CONNECT, true, drive);
-        const bool wp     = false; // TODO write-protect true as default
-        MediaFile *floppy = MediaFile::make(p);
-        df[drive]->insertMedia(*floppy, wp);
-        delete floppy;
-        ++drive;
+      case FileType::SCRIPT: /* .retrosh */
+        dbg("Executing script: %s\n", argv[i]);
+        emulator_.retroShell.execScript(*media);
+        auto_power_on = false;
+        continue;
+      default:
+        dbg("Unknown file type: '%s' '%s'\n", argv[i], FileTypeEnum::help(mt));
+        return 1;
       }
     }
 
-    // SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4		"1" is default
-    // SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED	"1" is default
-    // SDL_HINT_RENDER_VSYNC			"0" is default
-
+    // SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4     "1" is default
+    // SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED "1" is default
+    // SDL_HINT_RENDER_VSYNC                "0" is default
+#if 0 // TODO bug report Windows
+    bool hint = SDL_GetHintBoolean(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, false);
+    dbg("SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED = %d\n", hint);
+    SDL_SetHint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "1");
+    hint = SDL_GetHintBoolean(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, false);
+    dbg("SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED = %d\n", hint);
+#endif
     int window_w          = scale * screen_width;
     int window_h          = scale * screen_height;
     SDL_WindowFlags flags = 0; // SDL_WINDOW_RESIZABLE;
+    flags                 = SDL_WINDOW_BORDERLESS;
     // config / script proposal:
     // # parse UI setup directives in RetroShell comments begining with '# UI: '
     // # UI: scale = 2
@@ -197,7 +246,7 @@ public:
 
     overlay_.reset(
       SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, screen_width, screen_height));
-    if (!texture_)
+    if (!overlay_)
       throw_sdl_error("SDL_CreateTexture");
 
     if (!SDL_SetTextureBlendMode(overlay_.get(), SDL_BLENDMODE_BLEND))
@@ -212,33 +261,60 @@ public:
     if (!stream_)
       throw_sdl_error("SDL_OpenAudioDeviceStream");
 
-    emulator_.launch(
-      this, [](const void *ptr, Message msg) { reinterpret_cast<driver *>(const_cast<void *>(ptr))->msg_queue_callback(msg); });
-
     if (!emulator_.mem.getInfo().hasRom) {
-      RomFile rom{"kick13.rom"};
+      const fs::path rom{"kick13.rom"};
       emulator_.mem.loadRom(rom);
-    } else if (!ext_rom.empty())
-      emulator_.mem.loadExt(ext_rom);
+    }
 
     if (auto_power_on) {
       emulator_.powerOn();
       emulator_.run();
     }
 
+    int ret = 0;
     for (;;) {
       SDL_Event e;
       while (SDL_PollEvent(&e)) {
         if (e.type == SDL_EVENT_QUIT)
-          return 0;
+          break;
         handle_event(e);
       }
 
-      if (abort_)
-        return (int)~abort_;
+      if (e.type == SDL_EVENT_QUIT)
+        break;
+
+      if (abort_) {
+        ret = (int)~abort_;
+        break;
+      }
+
+      if (!(state_ & STATE::RUN)) {
+        SDL_Delay(100);
+        continue;
+      }
 
       update_viewport();
     }
+
+    // write back hard drives
+    for (int i = 0; i < hd; ++i) {
+      const string p = hdpath[i].string();
+      try {
+        const HardDriveInfo &info = dh[i]->getInfo();
+        if (info.writeProtected || p.empty()) { // TODO FIXME
+          dbg("DH%d is write protected\n", i);
+          continue;
+        }
+        if (info.modified) {
+          dbg("Writing DH%d: '%s'\n", i, p.c_str());
+          dh[i]->writeToFile(hdpath[i]);
+        }
+      } catch (const std::exception &e) {
+        dbg("Error writing DH%d: '%s' '%s'\n", i, p.c_str(), e.what());
+      }
+    }
+
+    return ret;
   }
 
 private:
@@ -288,7 +364,7 @@ int main(int argc, char *argv[]) {
     driver d;
     return d.run(argc, argv);
   } catch (const std::exception &e) {
-    std::cerr << e.what() << "\n";
+    dbg("Exception: %s\n", e.what());
     return 1;
   }
 }
@@ -297,9 +373,13 @@ void driver::capture_mouse(bool enabled) {
   if (enabled == mouse_captured_)
     return;
   SDL_Window *window = window_.get();
-  // SDL_SetWindowKeyboardGrab(window, enabled);
+  if (!SDL_SetWindowKeyboardGrab(window, enabled))
+    dbg("SDL_SetWindowKeyboardGrab: %s\n", SDL_GetError());
   SDL_SetWindowRelativeMouseMode(window, enabled);
-  SDL_SetWindowTitle(window, (std::string{"vAmiga"} + (enabled ? " - mouse captured" : "")).c_str());
+  std::string title = "vAmiga";
+  if (enabled)
+    title += " - mouse & kb captured";
+  SDL_SetWindowTitle(window, title.c_str());
   mouse_captured_ = enabled;
 }
 
@@ -355,7 +435,7 @@ void driver::handle_event(const SDL_Event &e) {
       const auto key    = convert_scancode(&e.key);
       SDL_Keymod kmods  = SDL_GetModState(); // TODO SDL_KMOD_LGUI vs SDL_KMOD_GUI issue
       const char *kname = SDL_GetKeyName(e.key.key);
-      dbg("scancode:%d UP %d key 0x%02X mod 0x%04x %s\n", e.key.scancode, up, key, kmods, kname);
+      dbg("scancode: %3d UP %d key 0x%02X mod 0x%04x %s\n", e.key.scancode, up, key, kmods, kname);
       if (handle_joystick_key(&e.key))
         break;
       if (key != 0xFF) {
@@ -400,55 +480,90 @@ void driver::handle_event(const SDL_Event &e) {
     }
     break;
   case SDL_EVENT_WINDOW_FOCUS_LOST:
-  case SDL_EVENT_WINDOW_MOUSE_LEAVE: capture_mouse(false); break;
+  case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+    capture_mouse(false);
+    break;
   }
 }
 
 void driver::msg_queue_callback(Message msg) {
   switch (msg.type) {
-  case MsgType::RSH_UPDATE:
-  case MsgType::RSH_DEBUGGER:
-  case MsgType::DRIVE_SELECT:
-  case MsgType::DRIVE_STEP:
-  case MsgType::DRIVE_POLL:
-  case MsgType::DISK_INSERT:
-  case MsgType::DISK_EJECT:
-  case MsgType::DRIVE_LED:
-  case MsgType::DRIVE_MOTOR:
-  case MsgType::SER_IN:
-  case MsgType::HDR_READ:
-  case MsgType::HDR_WRITE:
-  case MsgType::HDR_IDLE:
-  case MsgType::HDR_STEP:
-  case MsgType::HDC_STATE:
-  case MsgType::HDC_CONNECT:
-  case MsgType::VIEWPORT:
-  case MsgType::CONFIG:
-  case MsgType::POWER_LED_ON:
-  case MsgType::POWER_LED_OFF:
-  case MsgType::POWER_LED_DIM:
-  case MsgType::DRIVE_CONNECT:
-  case MsgType::MEM_LAYOUT:
-  case MsgType::OVERCLOCKING:
-  case MsgType::VIDEO_FORMAT:
-  case MsgType::DMA_DEBUG:
-  case MsgType::MUTE:
-  case MsgType::PAUSE:
-  case MsgType::RESET: return;
-  case MsgType::CTRL_AMIGA_AMIGA:
-    emulator_.hardReset(); // TODO softReset()
+  case Msg::RSH_UPDATE:
+  case Msg::RSH_DEBUGGER:
+  case Msg::DRIVE_SELECT:
+  case Msg::DRIVE_STEP:
+  case Msg::DRIVE_POLL:
+  case Msg::DISK_INSERT:
+  case Msg::DISK_EJECT:
+  case Msg::DRIVE_LED:
+  case Msg::DRIVE_MOTOR:
+  case Msg::SER_IN:
+  case Msg::HDR_READ:
+  case Msg::HDR_WRITE:
+  case Msg::HDR_IDLE:
+  case Msg::HDR_STEP:
+  case Msg::HDC_STATE:
+  case Msg::HDC_CONNECT:
+  case Msg::POWER_LED_ON:
+  case Msg::POWER_LED_OFF:
+  case Msg::POWER_LED_DIM:
+  case Msg::MEM_LAYOUT:
+  case Msg::DMA_DEBUG:
+    return;
+  case Msg::VIEWPORT:
+    if constexpr (1) {
+      const ViewportMsg &vp = msg.viewport;
+      // dbg("ViewportMsg: hstrt %d hstop %d vstrt %d vstop %d\n"
+      dbg("MsgQueue: type=%2ld (%s) %d,%d,%d,%d\n", (long)msg.type, MsgEnum::key(msg.type), vp.hstrt, vp.hstop, vp.vstrt,
+          vp.vstop);
+      return;
+    }
     break;
-  case MsgType::RUN: SDL_ResumeAudioStreamDevice(stream_); break;
-  case MsgType::ABORT: abort_ = ~msg.value; break;
-  case MsgType::POWER: power_is_on_ = msg.value; break;
+  case Msg::CONFIG:
+  case Msg::DRIVE_CONNECT:
+  case Msg::OVERCLOCKING:
+  case Msg::RESET:
+    break;
+  case Msg::VIDEO_FORMAT:
+    // ntsc = (msg.value == TV::NTSC);
+    break;
+  case Msg::CTRL_AMIGA_AMIGA:
+#if 1 // TODO softReset()
+    emulator_.hardReset();
+#else
+    emulator_.softReset();
+#endif
+    break;
+  case Msg::MUTE:
+    if (msg.value)
+      SDL_PauseAudioStreamDevice(stream_);
+    else
+      SDL_ResumeAudioStreamDevice(stream_);
+    break;
+  case Msg::PAUSE:
+    state_ = STATE::PAUSE;
+    SDL_PauseAudioStreamDevice(stream_);
+    break;
+  case Msg::RUN:
+    state_ = STATE::RUN;
+    SDL_ResumeAudioStreamDevice(stream_);
+    break;
+  case Msg::ABORT:
+    abort_ = ~msg.value;
+    break;
+  case Msg::POWER:
+    power_is_on_ = msg.value;
+    if (msg.value) {
+    }
+    break;
 
-  case MsgType::RECORDING_STOPPED:
+  case Msg::RECORDING_STOPPED:
 #ifdef SCREEN_RECORDER
     amiga_.denise.screenRecorder.exportAs("test.mp4");
 #endif
     std::cout << "Recording exported\n";
     break;
-    //            case MsgType::SER_OUT:
+    //            case Msg::SER_OUT:
     //                if ((data1 & 0xff) != '\n') {
     //                    ser_buffer_.push_back(static_cast<char>(data1 & 0xff));
     //                    return;
@@ -458,9 +573,10 @@ void driver::msg_queue_callback(Message msg) {
     //                std::cout << "Serial data: \"" << ser_buffer_.c_str() << "\"\n";
     //                ser_buffer_.clear();
     //                return;
-  default: break;
+  default:
+    break;
   }
-  dbg("MsgQueue: type=%ld value=%lld (%s)\n", (long)msg.type, (i64)msg.value, MsgTypeEnum::key(msg.type));
+  dbg("MsgQueue: type=%2ld value=%lld (%s)\n", (long)msg.type, (i64)msg.value, MsgEnum::key(msg.type));
 }
 
 // TODO SDL3 API Gamepad/Joystick
@@ -503,22 +619,40 @@ void driver::handle_overlay_key(const SDL_KeyboardEvent &e) {
     overlay_active_      = false;
     last_buffer_pointer_ = nullptr; // Force update (dirty)
     break;
-  case SDLK_UP: rs.press(RetroShellKey::UP); break;
-  case SDLK_DOWN: rs.press(RetroShellKey::DOWN); break;
-  case SDLK_LEFT: rs.press(RetroShellKey::LEFT); break;
-  case SDLK_RIGHT: rs.press(RetroShellKey::RIGHT); break;
-  case SDLK_HOME: rs.press(RetroShellKey::HOME); break;
-  case SDLK_END: rs.press(RetroShellKey::END); break;
-  case SDLK_TAB: rs.press(RetroShellKey::TAB); break;
-  case SDLK_BACKSPACE: rs.press(RetroShellKey::BACKSPACE); break;
-  case SDLK_DELETE: rs.press(RetroShellKey::DEL); break;
-  case SDLK_RETURN: rs.press(RetroShellKey::RETURN); break;
+  case SDLK_UP:
+    rs.press(RetroShellKey::UP);
+    break;
+  case SDLK_DOWN:
+    rs.press(RetroShellKey::DOWN);
+    break;
+  case SDLK_LEFT:
+    rs.press(RetroShellKey::LEFT);
+    break;
+  case SDLK_RIGHT:
+    rs.press(RetroShellKey::RIGHT);
+    break;
+  case SDLK_HOME:
+    rs.press(RetroShellKey::HOME);
+    break;
+  case SDLK_END:
+    rs.press(RetroShellKey::END);
+    break;
+  case SDLK_TAB:
+    rs.press(RetroShellKey::TAB);
+    break;
+  case SDLK_BACKSPACE:
+    rs.press(RetroShellKey::BACKSPACE);
+    break;
+  case SDLK_DELETE:
+    rs.press(RetroShellKey::DEL);
+    break;
+  case SDLK_RETURN:
+    rs.press(RetroShellKey::RETURN);
+    break;
   default:
     SDL_Keycode keycode = SDL_GetKeyFromScancode(e.scancode, e.mod, false);
-    if (keycode <= 0x7e)
+    if (keycode < 0x7f)
       rs.press((char)keycode);
-    else
-      dbg("Unhandled key: %X e.key %X e.mod %04x c=%c\n", keycode, e.key, e.mod, keycode);
     break;
   }
 }
@@ -538,16 +672,17 @@ void driver::update_viewport(void) {
   bool update      = overlay_active_ && overlay_dirty_;
   VideoPortAPI &vp = emulator_.videoPort;
   vp.lockTexture();
+  static isize last_frame_number = 0;
   isize nr;
   bool lof, prevlof;
   const u32 *ptr = vp.getTexture(&nr, &lof, &prevlof);
-  if (ptr != last_buffer_pointer_) { // HACK: Don't update if not a new frame
+  if (nr != last_frame_number /*|| ptr != last_buffer_pointer_ */) { // HACK: Don't update if not a new frame
     std::memcpy(&current_frame_[0], ptr, HPIXELS * VPIXELS * sizeof(uint32_t));
-
     void *pixels;
     int pitch;
     if (!SDL_LockTexture(texture_.get(), nullptr, &pixels, &pitch))
       throw_sdl_error("SDL_LockTexture");
+#if TEST0
     uint8_t *dest1       = reinterpret_cast<uint8_t *>(pixels) + !lof * pitch;
     uint8_t *dest2       = reinterpret_cast<uint8_t *>(pixels) + lof * pitch;
     const uint32_t *src1 = &current_frame_[0];
@@ -567,23 +702,39 @@ void driver::update_viewport(void) {
     // SDL_RenderClear(renderer_.get());
 
     std::swap(current_frame_, last_frame_);
+#else
+    std::memcpy(pixels, ptr, TPP * HPIXELS * VPIXELS * sizeof(uint32_t));
+    SDL_UnlockTexture(texture_.get());
+    // surface              = SDL_CreateSurfaceFrom(HPIXELS, VPIXELS, SDL_PIXELFORMAT_RGBA32, (void *)ptr, HPIXELS * 4);
+    // SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer_.get(), surface);
+    // texture_.reset(texture);
+    // SDL_DestroySurface(surface);
+#endif
+
     last_frame_type_     = lof;
     last_buffer_pointer_ = ptr;
+    last_frame_number    = nr;
     update               = true;
   }
   vp.unlockTexture();
-  emulator_.wakeUp();
 
   if (overlay_active_)
     update_overlay();
 
   if (update) {
-    SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr);
+#if !TEST0
+    SDL_FRect dstrect = *srcrect;
+    dstrect.w *= 2;
+    dstrect.h *= 2 * 2;
+    SDL_RenderTexture(renderer_.get(), texture_.get(), srcrect, &dstrect);
+#else
+    SDL_RenderTexture(renderer_.get(), texture_.get(), srcrect, nullptr);
+#endif
     if (overlay_active_)
       SDL_RenderTexture(renderer_.get(), overlay_.get(), nullptr, nullptr);
     SDL_RenderPresent(renderer_.get());
+    emulator_.wakeUp();
   }
-
   SDL_Delay(5);
 }
 
@@ -635,7 +786,7 @@ void driver::draw_cursor(void *pixels, int pitch, int x, int y, uint32_t color) 
 void driver::update_overlay() {
   if (!overlay_dirty_) {
     const auto now = SDL_GetTicks();
-    if (now - last_overlay_blink_ < 100)
+    if (now - last_overlay_blink_ < 250)
       return;
     last_overlay_blink_ = now;
   }

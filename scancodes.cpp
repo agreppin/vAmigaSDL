@@ -17,9 +17,8 @@ action_t convert_scancode(const SDL_KeyboardEvent *e) {
   return (ret & ACT_KEY) ? ret & 0xffu : 0xffu;
 }
 
-/* *INDENT-ON* */     /* clang-format on */
-#define ___(x) (0x00) // TODO
-#define KEY(x) (ACT_KEY | x)
+#define ___(x) (x) // TODO
+#define KEY(x) (x | ACT_KEY)
 
 constexpr action_t scancode2action[SDL_SCANCODE_COUNT] = {
   ___(0xFF), // SDL_SCANCODE_UNKNOWN
@@ -225,22 +224,22 @@ constexpr action_t scancode2action[SDL_SCANCODE_COUNT] = {
   ___(0xFF), // SDL_SCANCODE_DECIMALSEPARATOR = 179,
   ___(0xFF), // SDL_SCANCODE_CURRENCYUNIT = 180,
   ___(0xFF), // SDL_SCANCODE_CURRENCYSUBUNIT = 181,
-  ___(0xFF), // SDL_SCANCODE_KP_LEFTPAREN = 182,
-  ___(0xFF), // SDL_SCANCODE_KP_RIGHTPAREN = 183,
-  ___(0xFF), // SDL_SCANCODE_KP_LEFTBRACE = 184,
-  ___(0xFF), // SDL_SCANCODE_KP_RIGHTBRACE = 185,
+  KEY(0x5A), // SDL_SCANCODE_KP_LEFTPAREN = 182,
+  KEY(0x5B), // SDL_SCANCODE_KP_RIGHTPAREN = 183,
+  KEY(0x5A), // SDL_SCANCODE_KP_LEFTBRACE = 184,
+  KEY(0x5B), // SDL_SCANCODE_KP_RIGHTBRACE = 185,
   KEY(0x42), // SDL_SCANCODE_KP_TAB = 186,
-  ___(0xFF), // SDL_SCANCODE_KP_BACKSPACE = 187,
-  ___(0xFF), // SDL_SCANCODE_KP_A = 188,
-  ___(0xFF), // SDL_SCANCODE_KP_B = 189,
-  ___(0xFF), // SDL_SCANCODE_KP_C = 190,
-  ___(0xFF), // SDL_SCANCODE_KP_D = 191,
-  ___(0xFF), // SDL_SCANCODE_KP_E = 192,
-  ___(0xFF), // SDL_SCANCODE_KP_F = 193,
+  KEY(0x41), // SDL_SCANCODE_KP_BACKSPACE = 187,
+  KEY(0x20), // SDL_SCANCODE_KP_A = 188,
+  KEY(0x35), // SDL_SCANCODE_KP_B = 189,
+  KEY(0x33), // SDL_SCANCODE_KP_C = 190,
+  KEY(0x22), // SDL_SCANCODE_KP_D = 191,
+  KEY(0x12), // SDL_SCANCODE_KP_E = 192,
+  KEY(0x23), // SDL_SCANCODE_KP_F = 193,
   ___(0xFF), // SDL_SCANCODE_KP_XOR = 194,
   ___(0xFF), // SDL_SCANCODE_KP_POWER = 195,
   ___(0xFF), // SDL_SCANCODE_KP_PERCENT = 196,
-  ___(0xFF), // SDL_SCANCODE_KP_LESS = 197,
+  KEY(0x30), // SDL_SCANCODE_KP_LESS = 197,
   ___(0xFF), // SDL_SCANCODE_KP_GREATER = 198,
   ___(0xFF), // SDL_SCANCODE_KP_AMPERSAND = 199,
   ___(0xFF), // SDL_SCANCODE_KP_DBLAMPERSAND = 200,
@@ -248,7 +247,7 @@ constexpr action_t scancode2action[SDL_SCANCODE_COUNT] = {
   ___(0xFF), // SDL_SCANCODE_KP_DBLVERTICALBAR = 202,
   ___(0xFF), // SDL_SCANCODE_KP_COLON = 203,
   ___(0xFF), // SDL_SCANCODE_KP_HASH = 204,
-  ___(0xFF), // SDL_SCANCODE_KP_SPACE = 205,
+  KEY(0x40), // SDL_SCANCODE_KP_SPACE = 205,
   ___(0xFF), // SDL_SCANCODE_KP_AT = 206,
   ___(0xFF), // SDL_SCANCODE_KP_EXCLAM = 207,
   ___(0xFF), // SDL_SCANCODE_KP_MEMSTORE = 208,
@@ -397,6 +396,8 @@ static_assert(KEY(0x3E) == scancode2action[SDL_SCANCODE_KP_8]);
 static_assert(KEY(0x3F) == scancode2action[SDL_SCANCODE_KP_9]);
 static_assert(KEY(0x42) == scancode2action[SDL_SCANCODE_KP_TAB]);
 static_assert(KEY(0x4A) == scancode2action[SDL_SCANCODE_KP_MINUS]);
+static_assert(KEY(0x5A) == scancode2action[SDL_SCANCODE_KP_LEFTPAREN]);
+static_assert(KEY(0x5B) == scancode2action[SDL_SCANCODE_KP_RIGHTPAREN]);
 static_assert(KEY(0x5C) == scancode2action[SDL_SCANCODE_KP_DIVIDE]);
 static_assert(KEY(0x5D) == scancode2action[SDL_SCANCODE_KP_MULTIPLY]);
 static_assert(KEY(0x5E) == scancode2action[SDL_SCANCODE_KP_PLUS]);

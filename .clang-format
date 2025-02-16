@@ -2,7 +2,7 @@ AlignArrayOfStructures: Right
 AlignConsecutiveAssignments: Consecutive
 AlignConsecutiveMacros: Consecutive
 AlignEscapedNewlines: Left
-AllowShortCaseLabelsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: false
 AllowShortEnumsOnASingleLine: No
 AlwaysBreakAfterDefinitionReturnType: None
 AlwaysBreakTemplateDeclarations: Yes
