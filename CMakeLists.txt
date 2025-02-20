@@ -54,6 +54,9 @@ target_include_directories(vAmigaCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vAmiga/
 # Add subdirectories
 add_subdirectory(vAmiga/Emulator/VAmiga)
 
+# fixups
+set_target_properties(xdms PROPERTIES LINKER_LANGUAGE C)
+
 # Add libraries
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
