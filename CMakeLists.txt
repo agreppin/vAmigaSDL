@@ -4,7 +4,7 @@ if(DEFINED ENV{VCPKG_ROOT})
   include("$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
 endif()
 
-project(vAmigaSDL C CXX)
+project(${PROJECT_NAME} C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -63,7 +63,7 @@ target_link_libraries(vAmigaCore
 )
 
 # vAmigaSDL
-add_executable(vAmigaSDL
+add_executable(${PROJECT_NAME}
   debug.c
   main.cpp
   scancodes.cpp
@@ -72,7 +72,7 @@ add_executable(vAmigaSDL
 if (MSVC)
   set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Supported build configurations" FORCE)
 
-  target_compile_options(vAmigaCore PUBLIC /MP /analyze /permissive- /Zi /Zo /sdl /W4)
+  target_compile_options(${PROJECT_NAME} PUBLIC /MP /analyze /permissive- /Zi /Zo /sdl /W4)
   # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /analyze /permissive- /Zi /Zo /sdl /W4 /wd4100 /wd4201 /wd4324 /wd4458 /wd4146")
 
   if (NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
@@ -99,7 +99,7 @@ else()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMMON_FLAGS}")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${COMMON_FLAGS}")
   if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(vAmigaSDL PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-fconcepts>)
+    target_compile_options(${PROJECT_NAME} PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-fconcepts>)
   endif()
 endif()
 
@@ -139,14 +139,14 @@ else()
   find_package(SDL3 REQUIRED)
 endif()
 
-target_include_directories(vAmigaSDL PRIVATE ${SDL3_INCLUDE_DIRS})
-target_link_libraries(vAmigaSDL
+target_include_directories(${PROJECT_NAME} PRIVATE ${SDL3_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME}
   PRIVATE vAmigaCore
   PRIVATE ${SDL3_LIBRARIES}
   PRIVATE Threads::Threads
 )
 if (WIN32)
-#  target_link_libraries(vAmigaSDL ws2_32)
+#  target_link_libraries(${PROJECT_NAME} ws2_32)
 else()
-#  target_link_libraries(vAmigaSDL pthread)
+#  target_link_libraries(${PROJECT_NAME} pthread)
 endif()
