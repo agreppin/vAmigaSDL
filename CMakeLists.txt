@@ -72,13 +72,14 @@ add_executable(vAmigaSDL
 if (MSVC)
   set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Supported build configurations" FORCE)
 
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /permissive- /Zi /Zo /sdl /W4 /wd4100 /wd4201 /wd4324 /wd4458 /wd4146")
+  target_compile_options(vAmigaCore PUBLIC /MP /analyze /permissive- /Zi /Zo /sdl /W4)
+  # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /analyze /permissive- /Zi /Zo /sdl /W4 /wd4100 /wd4201 /wd4324 /wd4458 /wd4146")
 
   if (NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
       set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /JMC")
   endif()
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG")
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:10000000") # To allow ADFFile etc. on stack
+  # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:10000000") # To allow ADFFile etc. on stack
   set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
   add_definitions("-D_CRT_SECURE_NO_WARNINGS")
 else()

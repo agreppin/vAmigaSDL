@@ -18,7 +18,8 @@ static BOOL dbg_init() {
   return (_vDbgPrintEx != NULL);
 }
 
-void dbg(const char *fmt, ...) { /* also print on VS Output, like OutputDebugString */
+/* also print on Visual Studio Output, like OutputDebugString */
+void dbg(_Printf_format_string_ const char *fmt, ...) {
   va_list ap, ap2;
   va_start(ap, fmt);
   va_copy(ap2, ap);

@@ -26,29 +26,10 @@ enum STATE {
 static STATE state_ = STATE::INIT;
 
 // Visible area
-#define TEST0 1
-#if TEST0
 constexpr int xstart = (HBLANK_MAX + 1) * 4;
 constexpr int xend   = HPIXELS;
 constexpr int ystart = 0x1B;
 constexpr int yend   = 0x137;
-
-constexpr SDL_FRect *srcrect = nullptr;
-#else
-constexpr int xstart2 = (HBLANK_MAX + 1) * 4;
-constexpr int ystart2 = 0x1B + 1;
-constexpr int yend2   = VPIXELS - 2 + 1;
-constexpr int xstart  = 0;
-constexpr int xend    = HPIXELS;
-constexpr int ystart  = 0;
-constexpr int yend    = VPIXELS;
-#if 1
-constexpr SDL_FRect srcrect1 = {xstart, ystart * 2, (xend - xstart) * 1, (yend - ystart) * 2};
-#else
-constexpr SDL_FRect srcrect1 = {xstart, ystart2 * 2, (xend - xstart) * 1, (yend2 - ystart2) * 2};
-#endif
-static const SDL_FRect *srcrect = &srcrect1;
-#endif
 static_assert(xend - xstart <= HPIXELS);
 static_assert(yend - ystart <= VPIXELS);
 
@@ -213,18 +194,9 @@ public:
 
     // SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4     "1" is default
     // SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED "1" is default
-    // SDL_HINT_RENDER_VSYNC                "0" is default
-#if 0 // TODO bug report Windows
-    bool hint = SDL_GetHintBoolean(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, false);
-    dbg("SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED = %d\n", hint);
-    SDL_SetHint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "1");
-    hint = SDL_GetHintBoolean(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, false);
-    dbg("SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED = %d\n", hint);
-#endif
     int window_w          = scale * screen_width;
     int window_h          = scale * screen_height;
     SDL_WindowFlags flags = 0; // SDL_WINDOW_RESIZABLE;
-    flags                 = SDL_WINDOW_BORDERLESS;
     // config / script proposal:
     // # parse UI setup directives in RetroShell comments begining with '# UI: '
     // # UI: scale = 2
@@ -542,7 +514,6 @@ void driver::msg_queue_callback(Message msg) {
     break;
   case Msg::PAUSE:
     state_ = STATE::PAUSE;
-    SDL_PauseAudioStreamDevice(stream_);
     break;
   case Msg::RUN:
     state_ = STATE::RUN;
@@ -563,16 +534,16 @@ void driver::msg_queue_callback(Message msg) {
 #endif
     std::cout << "Recording exported\n";
     break;
-    //            case Msg::SER_OUT:
-    //                if ((data1 & 0xff) != '\n') {
-    //                    ser_buffer_.push_back(static_cast<char>(data1 & 0xff));
-    //                    return;
-    //                }
-    //                while (!ser_buffer_.empty() && ser_buffer_.back() == '\r')
-    //                    ser_buffer_.pop_back();
-    //                std::cout << "Serial data: \"" << ser_buffer_.c_str() << "\"\n";
-    //                ser_buffer_.clear();
-    //                return;
+    // case Msg::SER_OUT:
+    //     if ((data1 & 0xff) != '\n') {
+    //         ser_buffer_.push_back(static_cast<char>(data1 & 0xff));
+    //         return;
+    //     }
+    //     while (!ser_buffer_.empty() && ser_buffer_.back() == '\r')
+    //         ser_buffer_.pop_back();
+    //     std::cout << "Serial data: \"" << ser_buffer_.c_str() << "\"\n";
+    //     ser_buffer_.clear();
+    //     return;
   default:
     break;
   }
@@ -682,7 +653,6 @@ void driver::update_viewport(void) {
     int pitch;
     if (!SDL_LockTexture(texture_.get(), nullptr, &pixels, &pitch))
       throw_sdl_error("SDL_LockTexture");
-#if TEST0
     uint8_t *dest1       = reinterpret_cast<uint8_t *>(pixels) + !lof * pitch;
     uint8_t *dest2       = reinterpret_cast<uint8_t *>(pixels) + lof * pitch;
     const uint32_t *src1 = &current_frame_[0];
@@ -702,14 +672,6 @@ void driver::update_viewport(void) {
     // SDL_RenderClear(renderer_.get());
 
     std::swap(current_frame_, last_frame_);
-#else
-    std::memcpy(pixels, ptr, TPP * HPIXELS * VPIXELS * sizeof(uint32_t));
-    SDL_UnlockTexture(texture_.get());
-    // surface              = SDL_CreateSurfaceFrom(HPIXELS, VPIXELS, SDL_PIXELFORMAT_RGBA32, (void *)ptr, HPIXELS * 4);
-    // SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer_.get(), surface);
-    // texture_.reset(texture);
-    // SDL_DestroySurface(surface);
-#endif
 
     last_frame_type_     = lof;
     last_buffer_pointer_ = ptr;
@@ -722,14 +684,7 @@ void driver::update_viewport(void) {
     update_overlay();
 
   if (update) {
-#if !TEST0
-    SDL_FRect dstrect = *srcrect;
-    dstrect.w *= 2;
-    dstrect.h *= 2 * 2;
-    SDL_RenderTexture(renderer_.get(), texture_.get(), srcrect, &dstrect);
-#else
-    SDL_RenderTexture(renderer_.get(), texture_.get(), srcrect, nullptr);
-#endif
+    SDL_RenderTexture(renderer_.get(), texture_.get(), nullptr, nullptr);
     if (overlay_active_)
       SDL_RenderTexture(renderer_.get(), overlay_.get(), nullptr, nullptr);
     SDL_RenderPresent(renderer_.get());
