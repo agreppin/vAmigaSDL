@@ -76,7 +76,6 @@ if (MSVC)
   set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Supported build configurations" FORCE)
 
   target_compile_options(${PROJECT_NAME} PUBLIC /MP /analyze /permissive- /Zi /Zo /sdl /W4)
-  # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /analyze /permissive- /Zi /Zo /sdl /W4 /wd4100 /wd4201 /wd4324 /wd4458 /wd4146")
 
   if (NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
       set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /JMC")
